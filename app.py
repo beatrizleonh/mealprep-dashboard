@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-EXCEL_PATH = "base_datos_mealprep_streamlit_v2.xlsx"
+EXCEL_PATH = "base_datos_mealprep_streamlit.xlsx"
 
 
 # ---------------------------------------------------------
