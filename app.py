@@ -1,8 +1,10 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from fractions import Fraction
 from pathlib import Path
-from io import BytesIO
+import html
+import json
 
 # ---------------------------------------------------------
 # CONFIGURACIÓN GENERAL
@@ -14,8 +16,88 @@ st.set_page_config(
     layout="wide"
 )
 
-# OJO: este nombre debe coincidir EXACTAMENTE con el archivo que subiste a GitHub
 EXCEL_PATH = "base_datos_mealprep_streamlit.xlsx"
+
+
+# ---------------------------------------------------------
+# CSS
+# ---------------------------------------------------------
+
+st.markdown(
+    """
+    <style>
+    .summary-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 15px;
+    }
+
+    .summary-table th {
+        background-color: #f7f8fa;
+        padding: 10px;
+        border: 1px solid #e5e7eb;
+        text-align: left;
+        vertical-align: top;
+        font-weight: 700;
+    }
+
+    .summary-table td {
+        padding: 12px;
+        border: 1px solid #e5e7eb;
+        text-align: left;
+        vertical-align: top;
+        white-space: normal;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        min-height: 70px;
+    }
+
+    .summary-table .meal-col {
+        width: 120px;
+        font-weight: 700;
+        background-color: #fafafa;
+    }
+
+    .day-header {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .copy-btn {
+        border: 1px solid #d1d5db;
+        background-color: #ffffff;
+        border-radius: 8px;
+        padding: 5px 8px;
+        font-size: 12px;
+        cursor: pointer;
+    }
+
+    .copy-btn:hover {
+        background-color: #f3f4f6;
+    }
+
+    .ingredient-group {
+        margin-top: 20px;
+        margin-bottom: 8px;
+        font-size: 23px;
+        font-weight: 700;
+    }
+
+    .missing-list-box {
+        background-color: #fafafa;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin-top: 10px;
+        white-space: pre-wrap;
+        font-family: inherit;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 
 # ---------------------------------------------------------
@@ -24,7 +106,6 @@ EXCEL_PATH = "base_datos_mealprep_streamlit.xlsx"
 
 @st.cache_data
 def cargar_excel():
-    """Carga las hojas necesarias del Excel."""
     if not Path(EXCEL_PATH).exists():
         st.error(
             f"No encontré el archivo: {EXCEL_PATH}. "
@@ -51,7 +132,6 @@ def limpiar_texto(texto):
 
 
 def convertir_a_numero(valor):
-    """Convierte cantidades tipo 1/2, 2/3, 1.5 o 2 a número decimal."""
     if pd.isna(valor):
         return 0.0
 
@@ -75,7 +155,6 @@ def convertir_a_numero(valor):
 
 
 def formato_cantidad(numero):
-    """Convierte cantidades decimales a formato bonito tipo 1/2, 2/3, 1 1/2."""
     try:
         numero = float(numero)
     except Exception:
@@ -99,7 +178,6 @@ def formato_cantidad(numero):
 
 
 def encontrar_columna(df, posibles_nombres):
-    """Busca una columna aunque tenga acentos, espacios o variantes."""
     columnas = list(df.columns)
 
     for posible in posibles_nombres:
@@ -110,14 +188,166 @@ def encontrar_columna(df, posibles_nombres):
     return None
 
 
-def crear_excel_descarga(df):
-    """Crea archivo Excel descargable desde un dataframe."""
-    output = BytesIO()
+def copy_button(texto, label="Copiar", height=42):
+    texto_json = json.dumps(texto)
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Ingredientes faltantes")
+    components.html(
+        f"""
+        <button class="copy-btn" onclick='navigator.clipboard.writeText({texto_json}); this.innerText="Copiado ✅"; setTimeout(() => this.innerText="{label}", 1500);'>
+            {label}
+        </button>
 
-    return output.getvalue()
+        <style>
+        .copy-btn {{
+            border: 1px solid #d1d5db;
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 7px 11px;
+            font-size: 13px;
+            cursor: pointer;
+            font-family: sans-serif;
+        }}
+
+        .copy-btn:hover {{
+            background-color: #f3f4f6;
+        }}
+        </style>
+        """,
+        height=height
+    )
+
+
+def generar_texto_dia(menu_df, dia):
+    comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
+    lineas = [f"{dia}:"]
+
+    for comida in comidas:
+        fila = menu_df[
+            (menu_df["dia"] == dia) &
+            (menu_df["tipo"] == comida)
+        ]
+
+        if fila.empty:
+            platillo = ""
+        else:
+            platillo = fila.iloc[0]["platillo"]
+
+        lineas.append(f"{comida}: {platillo}")
+
+    return "\n".join(lineas)
+
+
+def generar_texto_tabla(menu_df):
+    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
+
+    lineas = []
+    lineas.append("Comida\t" + "\t".join(dias))
+
+    for comida in comidas:
+        valores = []
+
+        for dia in dias:
+            fila = menu_df[
+                (menu_df["dia"] == dia) &
+                (menu_df["tipo"] == comida)
+            ]
+
+            if fila.empty:
+                valores.append("")
+            else:
+                valores.append(str(fila.iloc[0]["platillo"]))
+
+        lineas.append(comida + "\t" + "\t".join(valores))
+
+    return "\n".join(lineas)
+
+
+def render_resumen_menu(menu_df):
+    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
+
+    html_table = """
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th class="meal-col">Tipo</th>
+    """
+
+    for dia in dias:
+        texto_dia = generar_texto_dia(menu_df, dia)
+        texto_dia_json = json.dumps(texto_dia)
+
+        html_table += f"""
+                <th>
+                    <div class="day-header">
+                        <span>{dia}</span>
+                        <button class="copy-btn" onclick='navigator.clipboard.writeText({texto_dia_json}); this.innerText="Copiado ✅"; setTimeout(() => this.innerText="Copiar día", 1500);'>
+                            Copiar día
+                        </button>
+                    </div>
+                </th>
+        """
+
+    html_table += """
+            </tr>
+        </thead>
+        <tbody>
+    """
+
+    for comida in comidas:
+        html_table += f"""
+            <tr>
+                <td class="meal-col">{comida}</td>
+        """
+
+        for dia in dias:
+            fila = menu_df[
+                (menu_df["dia"] == dia) &
+                (menu_df["tipo"] == comida)
+            ]
+
+            if fila.empty:
+                valor = ""
+            else:
+                valor = str(fila.iloc[0]["platillo"])
+
+            html_table += f"<td>{html.escape(valor)}</td>"
+
+        html_table += "</tr>"
+
+    html_table += """
+        </tbody>
+    </table>
+    """
+
+    st.markdown(html_table, unsafe_allow_html=True)
+
+
+def generar_texto_ingredientes(faltantes_df):
+    if faltantes_df.empty:
+        return "Todos los ingredientes están marcados como listos."
+
+    lineas = []
+
+    for grupo in sorted(faltantes_df["grupo"].dropna().unique().tolist()):
+        grupo_df = faltantes_df[faltantes_df["grupo"] == grupo].sort_values("ingrediente")
+
+        lineas.append(f"{grupo}:")
+
+        for _, row in grupo_df.iterrows():
+            ingrediente = row["ingrediente"]
+            cantidad = row["cantidad"]
+            unidad = row["unidad"]
+
+            if cantidad:
+                lineas.append(f"- {ingrediente} {cantidad} {unidad}")
+            else:
+                lineas.append(f"- {ingrediente} {unidad}")
+
+        lineas.append("")
+
+    return "\n".join(lineas).strip()
 
 
 # ---------------------------------------------------------
@@ -131,13 +361,11 @@ ingredientes_df = data["ingredientes"]
 preparaciones_df = data["preparaciones"]
 equivalencias_df = data["equivalencias"]
 
-# Limpieza de nombres de columnas
 platillos_df.columns = platillos_df.columns.str.strip().str.lower()
 ingredientes_df.columns = ingredientes_df.columns.str.strip().str.lower()
 preparaciones_df.columns = preparaciones_df.columns.str.strip().str.lower()
 equivalencias_df.columns = equivalencias_df.columns.str.strip().str.lower()
 
-# Limpieza de texto
 platillos_df["platillo"] = platillos_df["platillo"].apply(limpiar_texto)
 platillos_df["tipo"] = platillos_df["tipo"].apply(limpiar_texto).str.lower()
 
@@ -219,8 +447,7 @@ with tab_menu:
 
     seleccionados = []
 
-    # Encabezados de tabla
-    header_cols = st.columns([1.2, 1, 1, 1, 1, 1, 1, 1])
+    header_cols = st.columns([1.25, 1, 1, 1, 1, 1, 1, 1])
 
     with header_cols[0]:
         st.markdown("**Comida**")
@@ -231,9 +458,8 @@ with tab_menu:
 
     st.divider()
 
-    # Filas de la tabla
     for comida_visible, tipos_validos in filas_comida.items():
-        row_cols = st.columns([1.2, 1, 1, 1, 1, 1, 1, 1])
+        row_cols = st.columns([1.25, 1, 1, 1, 1, 1, 1, 1])
 
         with row_cols[0]:
             st.markdown(f"### {comida_visible}")
@@ -269,23 +495,20 @@ with tab_menu:
 
     st.divider()
 
-    st.subheader("Resumen del menú seleccionado")
+    title_col, copy_col = st.columns([5, 1])
+
+    with title_col:
+        st.subheader("Resumen del menú seleccionado")
 
     if menu_semanal_df.empty:
         st.warning("Todavía no has seleccionado platillos.")
     else:
-        resumen = menu_semanal_df.pivot(
-            index="tipo",
-            columns="dia",
-            values="platillo"
-        )
+        texto_tabla = generar_texto_tabla(menu_semanal_df)
 
-        orden_filas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
-        orden_columnas = dias
+        with copy_col:
+            copy_button(texto_tabla, label="Copiar tabla")
 
-        resumen = resumen.reindex(index=orden_filas, columns=orden_columnas)
-
-        st.dataframe(resumen, use_container_width=True)
+        render_resumen_menu(menu_semanal_df)
 
 
 # ---------------------------------------------------------
@@ -317,7 +540,10 @@ with tab_ingredientes:
 
         lista_super["cantidad_formato"] = lista_super["cantidad_total"].apply(formato_cantidad)
 
-        st.write(f"Ingredientes calculados para **{personas} persona(s)**.")
+        st.write(
+            f"Ingredientes calculados para **{personas} persona(s)** "
+            "con base en todos los platillos seleccionados en el menú semanal."
+        )
 
         ingredientes_faltantes = []
 
@@ -326,17 +552,17 @@ with tab_ingredientes:
         for grupo in grupos:
             grupo_df = lista_super[lista_super["grupo"] == grupo].copy()
 
-            st.markdown(f"## {grupo}")
+            st.markdown(f'<div class="ingredient-group">{html.escape(grupo)}</div>', unsafe_allow_html=True)
 
             for _, row in grupo_df.iterrows():
                 ingrediente = row["ingrediente"]
                 cantidad = row["cantidad_formato"]
                 unidad = row["unidad"]
 
-                if cantidad == "":
-                    texto_ingrediente = f"{ingrediente} — {unidad}"
+                if cantidad:
+                    texto_ingrediente = f"{ingrediente} {cantidad} {unidad}"
                 else:
-                    texto_ingrediente = f"{ingrediente} — {cantidad} {unidad}"
+                    texto_ingrediente = f"{ingrediente} {unidad}"
 
                 key_checkbox = f"check_ingrediente_{grupo}_{ingrediente}_{unidad}"
 
@@ -363,31 +589,17 @@ with tab_ingredientes:
             st.success("Ya marcaste todos los ingredientes como listos ✅")
         else:
             faltantes_df = pd.DataFrame(ingredientes_faltantes)
+            texto_faltantes = generar_texto_ingredientes(faltantes_df)
 
-            grupos_faltantes = sorted(faltantes_df["grupo"].dropna().unique().tolist())
+            copy_button(texto_faltantes, label="Copiar lista de ingredientes faltantes")
 
-            for grupo in grupos_faltantes:
-                st.markdown(f"### {grupo}")
-
-                grupo_faltantes = faltantes_df[faltantes_df["grupo"] == grupo]
-
-                for _, row in grupo_faltantes.iterrows():
-                    cantidad = row["cantidad"]
-                    unidad = row["unidad"]
-                    ingrediente = row["ingrediente"]
-
-                    if cantidad == "":
-                        st.write(f"- {ingrediente} — {unidad}")
-                    else:
-                        st.write(f"- {ingrediente} — {cantidad} {unidad}")
-
-            excel_faltantes = crear_excel_descarga(faltantes_df)
-
-            st.download_button(
-                label="Descargar ingredientes faltantes en Excel",
-                data=excel_faltantes,
-                file_name="ingredientes_faltantes_mealprep.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            st.markdown(
+                f"""
+                <div class="missing-list-box">
+                {html.escape(texto_faltantes)}
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
 
@@ -419,21 +631,22 @@ with tab_preparaciones:
                 platillo = row["platillo"]
                 key_hecho = f"prep_hecha_{platillo}"
 
-                hecho = st.checkbox(
-                    f"Ya está hecho: {platillo}",
-                    key=key_hecho
-                )
+                hecho = st.session_state.get(key_hecho, False)
 
-                if hecho:
-                    st.success(f"✅ {platillo} ya está preparado")
+                titulo_expander = f"~~{platillo}~~" if hecho else platillo
 
-                with st.expander(f"Ver preparación: {platillo}", expanded=not hecho):
+                with st.expander(titulo_expander, expanded=False):
+                    st.checkbox(
+                        "Marcar como preparado",
+                        key=key_hecho
+                    )
+
+                    st.divider()
+
                     if columna_preparacion:
                         st.write(row[columna_preparacion])
                     else:
                         st.write("No hay preparación disponible.")
-
-                st.divider()
 
 
 # ---------------------------------------------------------
