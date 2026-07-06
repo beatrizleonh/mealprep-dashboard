@@ -20,67 +20,15 @@ EXCEL_PATH = "base_datos_mealprep_streamlit.xlsx"
 
 
 # ---------------------------------------------------------
-# CSS
+# CSS GENERAL
 # ---------------------------------------------------------
 
 st.markdown(
     """
     <style>
-    .summary-table {
-        width: 100%;
-        border-collapse: collapse;
-        table-layout: fixed;
-        font-size: 15px;
-    }
-
-    .summary-table th {
-        background-color: #f7f8fa;
-        padding: 10px;
-        border: 1px solid #e5e7eb;
-        text-align: left;
-        vertical-align: top;
-        font-weight: 700;
-    }
-
-    .summary-table td {
-        padding: 12px;
-        border: 1px solid #e5e7eb;
-        text-align: left;
-        vertical-align: top;
-        white-space: normal;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
-        min-height: 70px;
-    }
-
-    .summary-table .meal-col {
-        width: 120px;
-        font-weight: 700;
-        background-color: #fafafa;
-    }
-
-    .day-header {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    .copy-btn {
-        border: 1px solid #d1d5db;
-        background-color: #ffffff;
-        border-radius: 8px;
-        padding: 5px 8px;
-        font-size: 12px;
-        cursor: pointer;
-    }
-
-    .copy-btn:hover {
-        background-color: #f3f4f6;
-    }
-
     .ingredient-group {
-        margin-top: 20px;
-        margin-bottom: 8px;
+        margin-top: 18px;
+        margin-bottom: 6px;
         font-size: 23px;
         font-weight: 700;
     }
@@ -89,10 +37,26 @@ st.markdown(
         background-color: #fafafa;
         border: 1px solid #e5e7eb;
         border-radius: 10px;
-        padding: 14px 18px;
+        padding: 16px 20px;
         margin-top: 10px;
-        white-space: pre-wrap;
         font-family: inherit;
+        font-size: 16px;
+        line-height: 1.35;
+    }
+
+    .missing-category {
+        font-weight: 800;
+        text-transform: uppercase;
+        margin-top: 12px;
+        margin-bottom: 4px;
+    }
+
+    .missing-category:first-child {
+        margin-top: 0;
+    }
+
+    .missing-item {
+        margin: 1px 0 1px 14px;
     }
     </style>
     """,
@@ -268,6 +232,72 @@ def render_resumen_menu(menu_df):
     comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
 
     html_table = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <style>
+    body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #111827;
+    }
+
+    .summary-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 15px;
+    }
+
+    .summary-table th {
+        background-color: #f7f8fa;
+        padding: 10px;
+        border: 1px solid #e5e7eb;
+        text-align: left;
+        vertical-align: top;
+        font-weight: 700;
+    }
+
+    .summary-table td {
+        padding: 12px;
+        border: 1px solid #e5e7eb;
+        text-align: left;
+        vertical-align: top;
+        white-space: normal;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        line-height: 1.35;
+        min-height: 65px;
+    }
+
+    .meal-col {
+        width: 115px;
+        font-weight: 700;
+        background-color: #fafafa;
+    }
+
+    .day-header {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .copy-btn {
+        border: 1px solid #d1d5db;
+        background-color: #ffffff;
+        border-radius: 8px;
+        padding: 5px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        width: fit-content;
+    }
+
+    .copy-btn:hover {
+        background-color: #f3f4f6;
+    }
+    </style>
+    </head>
+    <body>
     <table class="summary-table">
         <thead>
             <tr>
@@ -281,7 +311,7 @@ def render_resumen_menu(menu_df):
         html_table += f"""
                 <th>
                     <div class="day-header">
-                        <span>{dia}</span>
+                        <span>{html.escape(dia)}</span>
                         <button class="copy-btn" onclick='navigator.clipboard.writeText({texto_dia_json}); this.innerText="Copiado ✅"; setTimeout(() => this.innerText="Copiar día", 1500);'>
                             Copiar día
                         </button>
@@ -298,7 +328,7 @@ def render_resumen_menu(menu_df):
     for comida in comidas:
         html_table += f"""
             <tr>
-                <td class="meal-col">{comida}</td>
+                <td class="meal-col">{html.escape(comida)}</td>
         """
 
         for dia in dias:
@@ -319,9 +349,11 @@ def render_resumen_menu(menu_df):
     html_table += """
         </tbody>
     </table>
+    </body>
+    </html>
     """
 
-    st.markdown(html_table, unsafe_allow_html=True)
+    components.html(html_table, height=430, scrolling=True)
 
 
 def generar_texto_ingredientes(faltantes_df):
@@ -333,7 +365,7 @@ def generar_texto_ingredientes(faltantes_df):
     for grupo in sorted(faltantes_df["grupo"].dropna().unique().tolist()):
         grupo_df = faltantes_df[faltantes_df["grupo"] == grupo].sort_values("ingrediente")
 
-        lineas.append(f"{grupo}:")
+        lineas.append(f"{grupo.upper()}:")
 
         for _, row in grupo_df.iterrows():
             ingrediente = row["ingrediente"]
@@ -348,6 +380,35 @@ def generar_texto_ingredientes(faltantes_df):
         lineas.append("")
 
     return "\n".join(lineas).strip()
+
+
+def render_ingredientes_faltantes(faltantes_df):
+    if faltantes_df.empty:
+        st.success("Ya marcaste todos los ingredientes como listos ✅")
+        return
+
+    html_lista = '<div class="missing-list-box">'
+
+    for grupo in sorted(faltantes_df["grupo"].dropna().unique().tolist()):
+        grupo_df = faltantes_df[faltantes_df["grupo"] == grupo].sort_values("ingrediente")
+
+        html_lista += f'<div class="missing-category">{html.escape(grupo.upper())}:</div>'
+
+        for _, row in grupo_df.iterrows():
+            ingrediente = row["ingrediente"]
+            cantidad = row["cantidad"]
+            unidad = row["unidad"]
+
+            if cantidad:
+                texto = f"- {ingrediente} {cantidad} {unidad}"
+            else:
+                texto = f"- {ingrediente} {unidad}"
+
+            html_lista += f'<div class="missing-item">{html.escape(texto)}</div>'
+
+    html_lista += "</div>"
+
+    st.markdown(html_lista, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------
@@ -552,7 +613,10 @@ with tab_ingredientes:
         for grupo in grupos:
             grupo_df = lista_super[lista_super["grupo"] == grupo].copy()
 
-            st.markdown(f'<div class="ingredient-group">{html.escape(grupo)}</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="ingredient-group">{html.escape(grupo)}</div>',
+                unsafe_allow_html=True
+            )
 
             for _, row in grupo_df.iterrows():
                 ingrediente = row["ingrediente"]
@@ -593,14 +657,7 @@ with tab_ingredientes:
 
             copy_button(texto_faltantes, label="Copiar lista de ingredientes faltantes")
 
-            st.markdown(
-                f"""
-                <div class="missing-list-box">
-                {html.escape(texto_faltantes)}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            render_ingredientes_faltantes(faltantes_df)
 
 
 # ---------------------------------------------------------
