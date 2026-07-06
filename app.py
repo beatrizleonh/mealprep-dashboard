@@ -5,6 +5,7 @@ from fractions import Fraction
 from pathlib import Path
 import html
 import json
+import re
 
 # ---------------------------------------------------------
 # CONFIGURACIÓN GENERAL
@@ -181,57 +182,45 @@ def copy_button(texto, label="Copiar", height=42):
     )
 
 
+def get_menu_value(menu_df, dia, comida):
+    fila = menu_df[
+        (menu_df["dia"] == dia) &
+        (menu_df["tipo"] == comida)
+    ]
+
+    if fila.empty:
+        return ""
+
+    return str(fila.iloc[0]["platillo"]).strip()
+
+
 def generar_texto_dia(menu_df, dia):
     comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
     lineas = [f"{dia}:"]
 
     for comida in comidas:
-        fila = menu_df[
-            (menu_df["dia"] == dia) &
-            (menu_df["tipo"] == comida)
-        ]
-
-        if fila.empty:
-            platillo = ""
-        else:
-            platillo = fila.iloc[0]["platillo"]
-
+        platillo = get_menu_value(menu_df, dia, comida)
         lineas.append(f"{comida}: {platillo}")
 
     return "\n".join(lineas)
 
 
 def generar_texto_tabla(menu_df):
-    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-    comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
+    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
-    lineas = []
-    lineas.append("Comida\t" + "\t".join(dias))
+    bloques = []
 
-    for comida in comidas:
-        valores = []
+    for dia in dias:
+        bloques.append(generar_texto_dia(menu_df, dia))
 
-        for dia in dias:
-            fila = menu_df[
-                (menu_df["dia"] == dia) &
-                (menu_df["tipo"] == comida)
-            ]
-
-            if fila.empty:
-                valores.append("")
-            else:
-                valores.append(str(fila.iloc[0]["platillo"]))
-
-        lineas.append(comida + "\t" + "\t".join(valores))
-
-    return "\n".join(lineas)
+    return "\n\n".join(bloques)
 
 
 def render_resumen_menu(menu_df):
-    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
     comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
 
-    html_table = """
+    cards_html = """
     <!DOCTYPE html>
     <html>
     <head>
@@ -242,44 +231,32 @@ def render_resumen_menu(menu_df):
         color: #111827;
     }
 
-    .summary-table {
+    .cards-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
         width: 100%;
-        border-collapse: collapse;
-        table-layout: fixed;
-        font-size: 15px;
     }
 
-    .summary-table th {
-        background-color: #f7f8fa;
-        padding: 10px;
+    .day-card {
         border: 1px solid #e5e7eb;
-        text-align: left;
-        vertical-align: top;
-        font-weight: 700;
-    }
-
-    .summary-table td {
-        padding: 12px;
-        border: 1px solid #e5e7eb;
-        text-align: left;
-        vertical-align: top;
-        white-space: normal;
-        word-wrap: break-word;
-        overflow-wrap: break-word;
-        line-height: 1.35;
-        min-height: 65px;
-    }
-
-    .meal-col {
-        width: 115px;
-        font-weight: 700;
-        background-color: #fafafa;
+        border-radius: 14px;
+        padding: 14px;
+        background: #ffffff;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
     }
 
     .day-header {
         display: flex;
-        flex-direction: column;
-        gap: 6px;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .day-title {
+        font-weight: 800;
+        font-size: 18px;
     }
 
     .copy-btn {
@@ -289,71 +266,77 @@ def render_resumen_menu(menu_df):
         padding: 5px 8px;
         font-size: 12px;
         cursor: pointer;
-        width: fit-content;
+        white-space: nowrap;
     }
 
     .copy-btn:hover {
         background-color: #f3f4f6;
     }
+
+    .meal-row {
+        margin-bottom: 8px;
+        line-height: 1.35;
+    }
+
+    .meal-label {
+        font-weight: 700;
+        display: block;
+        font-size: 13px;
+        color: #374151;
+    }
+
+    .meal-value {
+        font-size: 14px;
+        color: #111827;
+    }
+
+    .empty-value {
+        color: #9ca3af;
+        font-style: italic;
+    }
     </style>
     </head>
     <body>
-    <table class="summary-table">
-        <thead>
-            <tr>
-                <th class="meal-col">Tipo</th>
+    <div class="cards-container">
     """
 
     for dia in dias:
         texto_dia = generar_texto_dia(menu_df, dia)
         texto_dia_json = json.dumps(texto_dia)
 
-        html_table += f"""
-                <th>
-                    <div class="day-header">
-                        <span>{html.escape(dia)}</span>
-                        <button class="copy-btn" onclick='navigator.clipboard.writeText({texto_dia_json}); this.innerText="Copiado ✅"; setTimeout(() => this.innerText="Copiar día", 1500);'>
-                            Copiar día
-                        </button>
-                    </div>
-                </th>
+        cards_html += f"""
+        <div class="day-card">
+            <div class="day-header">
+                <div class="day-title">{html.escape(dia)}</div>
+                <button class="copy-btn" onclick='navigator.clipboard.writeText({texto_dia_json}); this.innerText="Copiado ✅"; setTimeout(() => this.innerText="Copiar día", 1500);'>
+                    Copiar día
+                </button>
+            </div>
         """
 
-    html_table += """
-            </tr>
-        </thead>
-        <tbody>
-    """
-
-    for comida in comidas:
-        html_table += f"""
-            <tr>
-                <td class="meal-col">{html.escape(comida)}</td>
-        """
-
-        for dia in dias:
-            fila = menu_df[
-                (menu_df["dia"] == dia) &
-                (menu_df["tipo"] == comida)
-            ]
-
-            if fila.empty:
-                valor = ""
+        for comida in comidas:
+            platillo = get_menu_value(menu_df, dia, comida)
+            if platillo:
+                valor_html = f'<span class="meal-value">{html.escape(platillo)}</span>'
             else:
-                valor = str(fila.iloc[0]["platillo"])
+                valor_html = '<span class="meal-value empty-value">Sin elegir</span>'
 
-            html_table += f"<td>{html.escape(valor)}</td>"
+            cards_html += f"""
+            <div class="meal-row">
+                <span class="meal-label">{html.escape(comida)}:</span>
+                {valor_html}
+            </div>
+            """
 
-        html_table += "</tr>"
+        cards_html += "</div>"
 
-    html_table += """
-        </tbody>
-    </table>
+    cards_html += """
+    </div>
     </body>
     </html>
     """
 
-    components.html(html_table, height=430, scrolling=True)
+    components.html(cards_html, height=520, scrolling=True)
 
 
 def generar_texto_ingredientes(faltantes_df):
@@ -411,6 +394,77 @@ def render_ingredientes_faltantes(faltantes_df):
     st.markdown(html_lista, unsafe_allow_html=True)
 
 
+def parsear_menu_base(texto):
+    dias_validos = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+    comidas_validas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
+
+    resultado = []
+    dia_actual = None
+
+    lineas = texto.splitlines()
+
+    for linea in lineas:
+        linea = linea.strip()
+
+        if not linea:
+            continue
+
+        linea_normalizada = linea.replace("Miercoles", "Miércoles")
+
+        match_dia = re.match(r"^(Lunes|Martes|Miércoles|Miercoles|Jueves|Viernes)\s*:\s*$", linea_normalizada, re.IGNORECASE)
+
+        if match_dia:
+            dia = match_dia.group(1)
+            if dia.lower() == "miercoles":
+                dia = "Miércoles"
+            else:
+                dia = dia.capitalize()
+                if dia == "Miércoles":
+                    dia = "Miércoles"
+
+            if dia in dias_validos:
+                dia_actual = dia
+
+            continue
+
+        if dia_actual:
+            for comida in comidas_validas:
+                patron = rf"^{comida}\s*:\s*(.*)$"
+                match_comida = re.match(patron, linea, re.IGNORECASE)
+
+                if match_comida:
+                    platillo = match_comida.group(1).strip()
+
+                    if platillo:
+                        resultado.append(
+                            {
+                                "dia": dia_actual,
+                                "tipo": comida,
+                                "platillo": platillo
+                            }
+                        )
+
+                    break
+
+    return pd.DataFrame(resultado)
+
+
+def cargar_menu_en_session_state(menu_df):
+    for _, row in menu_df.iterrows():
+        key = f"menu_{row['tipo']}_{row['dia']}"
+        st.session_state[key] = row["platillo"]
+
+
+def limpiar_menu_session_state():
+    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+    comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
+
+    for comida in comidas:
+        for dia in dias:
+            key = f"menu_{comida}_{dia}"
+            st.session_state[key] = "—"
+
+
 # ---------------------------------------------------------
 # CARGA DE DATOS
 # ---------------------------------------------------------
@@ -450,7 +504,7 @@ ingredientes_df["cantidad_decimal"] = ingredientes_df["cantidad_decimal"].apply(
 st.title("🥗 Meal Prep Dashboard")
 
 st.write(
-    "Planea tus comidas de la semana, calcula ingredientes totales, "
+    "Planea tus comidas de lunes a viernes, calcula ingredientes totales, "
     "marca lo que ya tienes y revisa preparaciones y equivalencias."
 )
 
@@ -474,17 +528,24 @@ st.sidebar.info(
     "Aquí se multiplican automáticamente por el número de personas."
 )
 
+st.sidebar.divider()
+
+if st.sidebar.button("Iniciar menú nuevo"):
+    limpiar_menu_session_state()
+    st.sidebar.success("Menú reiniciado. Cambia de pestaña o actualiza para verlo limpio.")
+
 
 # ---------------------------------------------------------
 # TABS
 # ---------------------------------------------------------
 
-tab_menu, tab_ingredientes, tab_preparaciones, tab_equivalencias = st.tabs(
+tab_menu, tab_ingredientes, tab_preparaciones, tab_equivalencias, tab_base = st.tabs(
     [
         "📅 Menú semanal",
         "🛒 Ingredientes totales",
         "👩‍🍳 Preparaciones",
         "🔁 Equivalencias",
+        "📋 Base",
     ]
 )
 
@@ -496,7 +557,7 @@ tab_menu, tab_ingredientes, tab_preparaciones, tab_equivalencias = st.tabs(
 with tab_menu:
     st.subheader("📅 Menú semanal")
 
-    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
     filas_comida = {
         "Desayuno": ["desayuno"],
@@ -508,7 +569,7 @@ with tab_menu:
 
     seleccionados = []
 
-    header_cols = st.columns([1.25, 1, 1, 1, 1, 1, 1, 1])
+    header_cols = st.columns([1.25, 1, 1, 1, 1, 1])
 
     with header_cols[0]:
         st.markdown("**Comida**")
@@ -520,7 +581,7 @@ with tab_menu:
     st.divider()
 
     for comida_visible, tipos_validos in filas_comida.items():
-        row_cols = st.columns([1.25, 1, 1, 1, 1, 1, 1, 1])
+        row_cols = st.columns([1.25, 1, 1, 1, 1, 1])
 
         with row_cols[0]:
             st.markdown(f"### {comida_visible}")
@@ -535,11 +596,23 @@ with tab_menu:
         opciones = ["—"] + sorted(opciones)
 
         for i, dia in enumerate(dias):
+            key = f"menu_{comida_visible}_{dia}"
+
+            valor_actual = st.session_state.get(key, "—")
+
+            if valor_actual not in opciones:
+                opciones_mostradas = ["—", valor_actual] + [op for op in opciones if op not in ["—", valor_actual]]
+            else:
+                opciones_mostradas = opciones
+
+            index_default = opciones_mostradas.index(valor_actual) if valor_actual in opciones_mostradas else 0
+
             with row_cols[i + 1]:
                 platillo_elegido = st.selectbox(
                     label=f"{comida_visible} {dia}",
-                    options=opciones,
-                    key=f"menu_{comida_visible}_{dia}",
+                    options=opciones_mostradas,
+                    index=index_default,
+                    key=key,
                     label_visibility="collapsed"
                 )
 
@@ -580,7 +653,7 @@ with tab_ingredientes:
     st.subheader("🛒 Lista total de ingredientes")
 
     if menu_semanal_df.empty:
-        st.warning("Primero selecciona platillos en la pestaña de Menú semanal.")
+        st.warning("Primero selecciona platillos en la pestaña de Menú semanal o carga una base guardada.")
     else:
         platillos_seleccionados = menu_semanal_df["platillo"].tolist()
 
@@ -668,7 +741,7 @@ with tab_preparaciones:
     st.subheader("👩‍🍳 Preparaciones")
 
     if menu_semanal_df.empty:
-        st.warning("Primero selecciona platillos en la pestaña de Menú semanal.")
+        st.warning("Primero selecciona platillos en la pestaña de Menú semanal o carga una base guardada.")
     else:
         platillos_unicos = sorted(menu_semanal_df["platillo"].drop_duplicates().tolist())
 
@@ -753,3 +826,54 @@ with tab_equivalencias:
             )
 
             st.divider()
+
+
+# ---------------------------------------------------------
+# TAB 5: BASE
+# ---------------------------------------------------------
+
+with tab_base:
+    st.subheader("📋 Base guardada del menú")
+
+    st.write(
+        "Pega aquí el texto que copiaste con el botón **Copiar tabla**. "
+        "Después da clic en **Cargar menú desde base** para recuperar tu menú semanal."
+    )
+
+    ejemplo = """Lunes:
+Desayuno: Avena con arándanos y nuez
+Almuerzo: Chilaquiles con huevo y frijol
+Comida: Bowl de tofu mediterraneo con quinoa
+Merienda: Helado plátano y frutos
+Cena: Mug cake chocolate
+
+Martes:
+Desayuno: Overnight oats sabor pay de limón
+Almuerzo: Alambre de seitán con frijoles
+Comida: Burrito salad
+Merienda: Helado plátano y frutos
+Cena: Cereal de soya con nuez y frutos rojos"""
+
+    texto_base = st.text_area(
+        "Pega aquí tu menú guardado:",
+        height=350,
+        placeholder=ejemplo,
+        key="texto_base_menu"
+    )
+
+    col_cargar, col_limpiar = st.columns([1, 1])
+
+    with col_cargar:
+        if st.button("Cargar menú desde base"):
+            menu_cargado_df = parsear_menu_base(texto_base)
+
+            if menu_cargado_df.empty:
+                st.error("No pude leer el menú. Revisa que tenga el formato: Día: y luego Comida: platillo.")
+            else:
+                cargar_menu_en_session_state(menu_cargado_df)
+                st.success("Menú cargado correctamente. Ve a la pestaña Menú semanal para verlo actualizado.")
+
+    with col_limpiar:
+        if st.button("Limpiar menú actual"):
+            limpiar_menu_session_state()
+            st.success("Menú limpiado. Ve a la pestaña Menú semanal para confirmar.")
