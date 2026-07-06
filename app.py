@@ -440,6 +440,48 @@ def render_ingredientes_faltantes(faltantes_df):
     st.markdown(html_lista, unsafe_allow_html=True)
 
 
+def consolidar_ingredientes_faltantes(faltantes_df):
+    """
+    Une ingredientes repetidos después de elegir equivalencias.
+    Ejemplo:
+    Couscous cocido 1/3 taza + Couscous cocido 2/3 taza = Couscous cocido 1 taza.
+    """
+    if faltantes_df.empty:
+        return faltantes_df
+
+    df = faltantes_df.copy()
+
+    df["cantidad_num"] = df["cantidad"].apply(convertir_a_numero)
+
+    consolidado = (
+        df.groupby(["grupo", "ingrediente", "unidad"], as_index=False)
+        .agg(
+            cantidad_num=("cantidad_num", "sum"),
+            platillos=(
+                "platillos",
+                lambda x: ", ".join(
+                    sorted(
+                        set(
+                            p.strip()
+                            for item in x
+                            for p in str(item).split(",")
+                            if p.strip()
+                        )
+                    )
+                )
+            )
+        )
+    )
+
+    consolidado["cantidad"] = consolidado["cantidad_num"].apply(formato_cantidad)
+
+    consolidado = consolidado[
+        ["grupo", "ingrediente", "cantidad", "unidad", "platillos"]
+    ].sort_values(["grupo", "ingrediente"])
+
+    return consolidado
+
+
 def parsear_menu_base(texto):
     resultado = []
     dia_actual = None
@@ -884,6 +926,10 @@ with tab_ingredientes:
             st.success("Ya marcaste todos los ingredientes como listos ✅")
         else:
             faltantes_df = pd.DataFrame(ingredientes_faltantes)
+
+            # Consolidar ingredientes repetidos después de elegir equivalencias
+            faltantes_df = consolidar_ingredientes_faltantes(faltantes_df)
+
             texto_faltantes = generar_texto_ingredientes(faltantes_df)
 
             copy_button(texto_faltantes, label="Copiar lista de ingredientes faltantes")
