@@ -6,6 +6,7 @@ from pathlib import Path
 import html
 import json
 import re
+import unicodedata
 
 # ---------------------------------------------------------
 # CONFIGURACIÓN GENERAL
@@ -18,6 +19,9 @@ st.set_page_config(
 )
 
 EXCEL_PATH = "base_datos_mealprep_streamlit.xlsx"
+
+DIAS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+COMIDAS = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
 
 
 # ---------------------------------------------------------
@@ -59,6 +63,11 @@ st.markdown(
     .missing-item {
         margin: 1px 0 1px 14px;
     }
+
+    .ingredient-note {
+        color: #6b7280;
+        font-size: 0.92rem;
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -80,20 +89,26 @@ def cargar_excel():
 
     xls = pd.ExcelFile(EXCEL_PATH)
 
-    hojas = {
+    return {
         "platillos": pd.read_excel(xls, sheet_name="Hoja 1 - Platillos"),
         "ingredientes": pd.read_excel(xls, sheet_name="Ingredientes_base"),
         "preparaciones": pd.read_excel(xls, sheet_name="Hoja 3 - Preparaciones"),
         "equivalencias": pd.read_excel(xls, sheet_name="Hoja 4 - Equivalencias"),
     }
 
-    return hojas
-
 
 def limpiar_texto(texto):
     if pd.isna(texto):
         return ""
     return str(texto).strip()
+
+
+def normalizar(texto):
+    texto = limpiar_texto(texto).lower()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
 
 
 def convertir_a_numero(valor):
@@ -142,14 +157,40 @@ def formato_cantidad(numero):
     return f"{entero} {frac.numerator}/{frac.denominator}"
 
 
-def encontrar_columna(df, posibles_nombres):
-    columnas = list(df.columns)
+def separar_cantidad_unidad(texto):
+    """
+    Convierte textos tipo:
+    '1/4 taza' -> 0.25, 'taza'
+    '2 cucharadas' -> 2, 'cucharadas'
+    '30 gramos' -> 30, 'gramos'
+    """
+    texto = limpiar_texto(texto)
 
+    if texto == "":
+        return 0.0, ""
+
+    match = re.match(r"^(\d+\s+\d+/\d+|\d+/\d+|\d+(\.\d+)?)(.*)$", texto)
+
+    if not match:
+        return 0.0, texto
+
+    cantidad_txt = match.group(1).strip()
+    unidad = match.group(3).strip()
+
+    if " " in cantidad_txt and "/" in cantidad_txt:
+        partes = cantidad_txt.split()
+        cantidad = float(partes[0]) + float(Fraction(partes[1]))
+    else:
+        cantidad = convertir_a_numero(cantidad_txt)
+
+    return cantidad, unidad
+
+
+def encontrar_columna(df, posibles_nombres):
     for posible in posibles_nombres:
-        for col in columnas:
+        for col in df.columns:
             if col.lower().strip() == posible.lower().strip():
                 return col
-
     return None
 
 
@@ -195,10 +236,9 @@ def get_menu_value(menu_df, dia, comida):
 
 
 def generar_texto_dia(menu_df, dia):
-    comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
     lineas = [f"{dia}:"]
 
-    for comida in comidas:
+    for comida in COMIDAS:
         platillo = get_menu_value(menu_df, dia, comida)
         lineas.append(f"{comida}: {platillo}")
 
@@ -206,20 +246,15 @@ def generar_texto_dia(menu_df, dia):
 
 
 def generar_texto_tabla(menu_df):
-    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
-
     bloques = []
 
-    for dia in dias:
+    for dia in DIAS:
         bloques.append(generar_texto_dia(menu_df, dia))
 
     return "\n\n".join(bloques)
 
 
 def render_resumen_menu(menu_df):
-    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
-    comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
-
     cards_html = """
     <!DOCTYPE html>
     <html>
@@ -233,7 +268,7 @@ def render_resumen_menu(menu_df):
 
     .cards-container {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
         gap: 14px;
         width: 100%;
     }
@@ -300,7 +335,7 @@ def render_resumen_menu(menu_df):
     <div class="cards-container">
     """
 
-    for dia in dias:
+    for dia in DIAS:
         texto_dia = generar_texto_dia(menu_df, dia)
         texto_dia_json = json.dumps(texto_dia)
 
@@ -314,8 +349,9 @@ def render_resumen_menu(menu_df):
             </div>
         """
 
-        for comida in comidas:
+        for comida in COMIDAS:
             platillo = get_menu_value(menu_df, dia, comida)
+
             if platillo:
                 valor_html = f'<span class="meal-value">{html.escape(platillo)}</span>'
             else:
@@ -336,7 +372,7 @@ def render_resumen_menu(menu_df):
     </html>
     """
 
-    components.html(cards_html, height=520, scrolling=True)
+    components.html(cards_html, height=540, scrolling=True)
 
 
 def generar_texto_ingredientes(faltantes_df):
@@ -354,11 +390,17 @@ def generar_texto_ingredientes(faltantes_df):
             ingrediente = row["ingrediente"]
             cantidad = row["cantidad"]
             unidad = row["unidad"]
+            platillos = row.get("platillos", "")
 
             if cantidad:
-                lineas.append(f"- {ingrediente} {cantidad} {unidad}")
+                linea = f"- {ingrediente} {cantidad} {unidad}"
             else:
-                lineas.append(f"- {ingrediente} {unidad}")
+                linea = f"- {ingrediente} {unidad}"
+
+            if platillos:
+                linea += f" ({platillos})"
+
+            lineas.append(linea)
 
         lineas.append("")
 
@@ -381,11 +423,15 @@ def render_ingredientes_faltantes(faltantes_df):
             ingrediente = row["ingrediente"]
             cantidad = row["cantidad"]
             unidad = row["unidad"]
+            platillos = row.get("platillos", "")
 
             if cantidad:
                 texto = f"- {ingrediente} {cantidad} {unidad}"
             else:
                 texto = f"- {ingrediente} {unidad}"
+
+            if platillos:
+                texto += f" ({platillos})"
 
             html_lista += f'<div class="missing-item">{html.escape(texto)}</div>'
 
@@ -395,15 +441,10 @@ def render_ingredientes_faltantes(faltantes_df):
 
 
 def parsear_menu_base(texto):
-    dias_validos = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
-    comidas_validas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
-
     resultado = []
     dia_actual = None
 
-    lineas = texto.splitlines()
-
-    for linea in lineas:
+    for linea in texto.splitlines():
         linea = linea.strip()
 
         if not linea:
@@ -411,26 +452,29 @@ def parsear_menu_base(texto):
 
         linea_normalizada = linea.replace("Miercoles", "Miércoles")
 
-        match_dia = re.match(r"^(Lunes|Martes|Miércoles|Miercoles|Jueves|Viernes)\s*:\s*$", linea_normalizada, re.IGNORECASE)
+        match_dia = re.match(
+            r"^(Lunes|Martes|Miércoles|Miercoles|Jueves|Viernes)\s*:\s*$",
+            linea_normalizada,
+            re.IGNORECASE
+        )
 
         if match_dia:
             dia = match_dia.group(1)
-            if dia.lower() == "miercoles":
-                dia = "Miércoles"
-            else:
-                dia = dia.capitalize()
-                if dia == "Miércoles":
-                    dia = "Miércoles"
 
-            if dia in dias_validos:
-                dia_actual = dia
+            if normalizar(dia) == "miercoles":
+                dia_actual = "Miércoles"
+            else:
+                dia_actual = dia.capitalize()
 
             continue
 
         if dia_actual:
-            for comida in comidas_validas:
-                patron = rf"^{comida}\s*:\s*(.*)$"
-                match_comida = re.match(patron, linea, re.IGNORECASE)
+            for comida in COMIDAS:
+                match_comida = re.match(
+                    rf"^{comida}\s*:\s*(.*)$",
+                    linea,
+                    re.IGNORECASE
+                )
 
                 if match_comida:
                     platillo = match_comida.group(1).strip()
@@ -456,13 +500,78 @@ def cargar_menu_en_session_state(menu_df):
 
 
 def limpiar_menu_session_state():
-    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
-    comidas = ["Desayuno", "Almuerzo", "Comida", "Merienda", "Cena"]
-
-    for comida in comidas:
-        for dia in dias:
+    for comida in COMIDAS:
+        for dia in DIAS:
             key = f"menu_{comida}_{dia}"
             st.session_state[key] = "—"
+
+
+def preparar_equivalencias(equivalencias_df):
+    categoria_col = encontrar_columna(equivalencias_df, ["categoría", "categoria"])
+    ingrediente_col = encontrar_columna(equivalencias_df, ["ingrediente"])
+    cantidad_col = encontrar_columna(equivalencias_df, ["cantidad"])
+
+    if not categoria_col or not ingrediente_col or not cantidad_col:
+        return pd.DataFrame()
+
+    eq = equivalencias_df[[categoria_col, ingrediente_col, cantidad_col]].copy()
+    eq.columns = ["categoría", "ingrediente", "cantidad"]
+
+    eq["categoría"] = eq["categoría"].apply(limpiar_texto)
+    eq["ingrediente"] = eq["ingrediente"].apply(limpiar_texto)
+    eq["cantidad"] = eq["cantidad"].apply(limpiar_texto)
+    eq["categoria_norm"] = eq["categoría"].apply(normalizar)
+    eq["ingrediente_norm"] = eq["ingrediente"].apply(normalizar)
+
+    eq[["cantidad_num", "unidad_eq"]] = eq["cantidad"].apply(
+        lambda x: pd.Series(separar_cantidad_unidad(x))
+    )
+
+    return eq
+
+
+def obtener_equivalentes(eq_df, grupo):
+    grupo_norm = normalizar(grupo)
+
+    opciones = (
+        eq_df[eq_df["categoria_norm"] == grupo_norm]["ingrediente"]
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    return sorted(opciones)
+
+
+def calcular_sustitucion(eq_df, grupo, ingrediente_original, cantidad_total_original, unidad_original, ingrediente_elegido):
+    grupo_norm = normalizar(grupo)
+    original_norm = normalizar(ingrediente_original)
+    elegido_norm = normalizar(ingrediente_elegido)
+
+    original_eq = eq_df[
+        (eq_df["categoria_norm"] == grupo_norm) &
+        (eq_df["ingrediente_norm"] == original_norm)
+    ]
+
+    elegido_eq = eq_df[
+        (eq_df["categoria_norm"] == grupo_norm) &
+        (eq_df["ingrediente_norm"] == elegido_norm)
+    ]
+
+    if original_eq.empty or elegido_eq.empty:
+        return formato_cantidad(cantidad_total_original), unidad_original
+
+    cantidad_original_eq = float(original_eq.iloc[0]["cantidad_num"])
+    cantidad_elegida_eq = float(elegido_eq.iloc[0]["cantidad_num"])
+    unidad_elegida = str(elegido_eq.iloc[0]["unidad_eq"]).strip()
+
+    if cantidad_original_eq == 0 or cantidad_elegida_eq == 0:
+        return formato_cantidad(cantidad_total_original), unidad_original
+
+    equivalentes = cantidad_total_original / cantidad_original_eq
+    nueva_cantidad = equivalentes * cantidad_elegida_eq
+
+    return formato_cantidad(nueva_cantidad), unidad_elegida
 
 
 # ---------------------------------------------------------
@@ -495,6 +604,17 @@ if "cantidad_decimal" not in ingredientes_df.columns:
     ingredientes_df["cantidad_decimal"] = ingredientes_df["cantidad"].apply(convertir_a_numero)
 
 ingredientes_df["cantidad_decimal"] = ingredientes_df["cantidad_decimal"].apply(convertir_a_numero)
+
+equivalencias_limpias_global = preparar_equivalencias(equivalencias_df)
+
+# Carga segura desde Base: se aplica ANTES de dibujar selectboxes
+if "menu_pendiente_carga" in st.session_state:
+    cargar_menu_en_session_state(pd.DataFrame(st.session_state["menu_pendiente_carga"]))
+    del st.session_state["menu_pendiente_carga"]
+
+if st.session_state.get("limpiar_menu_pendiente", False):
+    limpiar_menu_session_state()
+    st.session_state["limpiar_menu_pendiente"] = False
 
 
 # ---------------------------------------------------------
@@ -532,7 +652,7 @@ st.sidebar.divider()
 
 if st.sidebar.button("Iniciar menú nuevo"):
     limpiar_menu_session_state()
-    st.sidebar.success("Menú reiniciado. Cambia de pestaña o actualiza para verlo limpio.")
+    st.sidebar.success("Menú reiniciado.")
 
 
 # ---------------------------------------------------------
@@ -557,8 +677,6 @@ tab_menu, tab_ingredientes, tab_preparaciones, tab_equivalencias, tab_base = st.
 with tab_menu:
     st.subheader("📅 Menú semanal")
 
-    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
-
     filas_comida = {
         "Desayuno": ["desayuno"],
         "Almuerzo": ["almuerzo", "colación 1", "colacion 1"],
@@ -574,7 +692,7 @@ with tab_menu:
     with header_cols[0]:
         st.markdown("**Comida**")
 
-    for i, dia in enumerate(dias):
+    for i, dia in enumerate(DIAS):
         with header_cols[i + 1]:
             st.markdown(f"**{dia}**")
 
@@ -595,13 +713,14 @@ with tab_menu:
 
         opciones = ["—"] + sorted(opciones)
 
-        for i, dia in enumerate(dias):
+        for i, dia in enumerate(DIAS):
             key = f"menu_{comida_visible}_{dia}"
-
             valor_actual = st.session_state.get(key, "—")
 
             if valor_actual not in opciones:
-                opciones_mostradas = ["—", valor_actual] + [op for op in opciones if op not in ["—", valor_actual]]
+                opciones_mostradas = ["—", valor_actual] + [
+                    op for op in opciones if op not in ["—", valor_actual]
+                ]
             else:
                 opciones_mostradas = opciones
 
@@ -667,12 +786,13 @@ with tab_ingredientes:
 
         lista_super = (
             ingredientes_filtrados
-            .groupby(["grupo", "ingrediente", "unidad"], as_index=False)["cantidad_total"]
-            .sum()
+            .groupby(["grupo", "ingrediente", "unidad"], as_index=False)
+            .agg(
+                cantidad_total=("cantidad_total", "sum"),
+                platillos=("platillo", lambda x: ", ".join(sorted(set(x))))
+            )
             .sort_values(["grupo", "ingrediente"])
         )
-
-        lista_super["cantidad_formato"] = lista_super["cantidad_total"].apply(formato_cantidad)
 
         st.write(
             f"Ingredientes calculados para **{personas} persona(s)** "
@@ -692,29 +812,67 @@ with tab_ingredientes:
             )
 
             for _, row in grupo_df.iterrows():
-                ingrediente = row["ingrediente"]
-                cantidad = row["cantidad_formato"]
-                unidad = row["unidad"]
+                ingrediente_original = row["ingrediente"]
+                unidad_original = row["unidad"]
+                cantidad_total = row["cantidad_total"]
+                platillos_usados = row["platillos"]
 
-                if cantidad:
-                    texto_ingrediente = f"{ingrediente} {cantidad} {unidad}"
+                equivalentes = obtener_equivalentes(equivalencias_limpias_global, grupo)
+
+                if ingrediente_original not in equivalentes:
+                    opciones_equivalentes = [ingrediente_original] + equivalentes
                 else:
-                    texto_ingrediente = f"{ingrediente} {unidad}"
+                    opciones_equivalentes = equivalentes
 
-                key_checkbox = f"check_ingrediente_{grupo}_{ingrediente}_{unidad}"
+                opciones_equivalentes = list(dict.fromkeys(opciones_equivalentes))
 
-                marcado = st.checkbox(
-                    texto_ingrediente,
-                    key=key_checkbox
+                key_select = f"equiv_{grupo}_{ingrediente_original}_{unidad_original}"
+                key_checkbox = f"check_ingrediente_{grupo}_{ingrediente_original}_{unidad_original}"
+
+                col_check, col_info, col_select = st.columns([0.15, 2.5, 1.7])
+
+                with col_select:
+                    ingrediente_elegido = st.selectbox(
+                        "Equivalente",
+                        opciones_equivalentes,
+                        index=opciones_equivalentes.index(ingrediente_original)
+                        if ingrediente_original in opciones_equivalentes else 0,
+                        key=key_select,
+                        label_visibility="collapsed"
+                    )
+
+                cantidad_mostrar, unidad_mostrar = calcular_sustitucion(
+                    equivalencias_limpias_global,
+                    grupo,
+                    ingrediente_original,
+                    cantidad_total,
+                    unidad_original,
+                    ingrediente_elegido
                 )
+
+                with col_check:
+                    marcado = st.checkbox(
+                        "",
+                        key=key_checkbox,
+                        label_visibility="collapsed"
+                    )
+
+                with col_info:
+                    texto_ingrediente = f"**{ingrediente_elegido}** {cantidad_mostrar} {unidad_mostrar}"
+                    st.markdown(
+                        f"{texto_ingrediente} "
+                        f"<span class='ingredient-note'>({html.escape(platillos_usados)})</span>",
+                        unsafe_allow_html=True
+                    )
 
                 if not marcado:
                     ingredientes_faltantes.append(
                         {
                             "grupo": grupo,
-                            "ingrediente": ingrediente,
-                            "cantidad": cantidad,
-                            "unidad": unidad,
+                            "ingrediente": ingrediente_elegido,
+                            "cantidad": cantidad_mostrar,
+                            "unidad": unidad_mostrar,
+                            "platillos": platillos_usados
                         }
                     )
 
@@ -786,37 +944,27 @@ with tab_preparaciones:
 with tab_equivalencias:
     st.subheader("🔁 Equivalencias por categoría")
 
-    categoria_col = encontrar_columna(equivalencias_df, ["categoría", "categoria"])
-    ingrediente_col = encontrar_columna(equivalencias_df, ["ingrediente"])
-    cantidad_col = encontrar_columna(equivalencias_df, ["cantidad"])
-
-    if not categoria_col or not ingrediente_col or not cantidad_col:
+    if equivalencias_limpias_global.empty:
         st.error(
             "No encontré las columnas necesarias en la hoja de equivalencias. "
             "Necesito: categoría, ingrediente y cantidad."
         )
     else:
-        equivalencias_limpias = equivalencias_df[
-            [categoria_col, ingrediente_col, cantidad_col]
+        equivalencias_tabla = equivalencias_limpias_global[
+            ["categoría", "ingrediente", "cantidad"]
         ].copy()
 
-        equivalencias_limpias.columns = ["categoría", "ingrediente", "cantidad"]
-
-        equivalencias_limpias["categoría"] = equivalencias_limpias["categoría"].apply(limpiar_texto)
-        equivalencias_limpias["ingrediente"] = equivalencias_limpias["ingrediente"].apply(limpiar_texto)
-        equivalencias_limpias["cantidad"] = equivalencias_limpias["cantidad"].apply(limpiar_texto)
-
-        equivalencias_limpias = equivalencias_limpias.sort_values(
+        equivalencias_tabla = equivalencias_tabla.sort_values(
             by=["categoría", "ingrediente"]
         )
 
-        categorias = sorted(equivalencias_limpias["categoría"].dropna().unique().tolist())
+        categorias = sorted(equivalencias_tabla["categoría"].dropna().unique().tolist())
 
         for categoria in categorias:
             st.markdown(f"## {categoria}")
 
-            tabla_categoria = equivalencias_limpias[
-                equivalencias_limpias["categoría"] == categoria
+            tabla_categoria = equivalencias_tabla[
+                equivalencias_tabla["categoría"] == categoria
             ][["ingrediente", "cantidad"]].sort_values("ingrediente")
 
             st.dataframe(
@@ -870,10 +1018,12 @@ Cena: Cereal de soya con nuez y frutos rojos"""
             if menu_cargado_df.empty:
                 st.error("No pude leer el menú. Revisa que tenga el formato: Día: y luego Comida: platillo.")
             else:
-                cargar_menu_en_session_state(menu_cargado_df)
-                st.success("Menú cargado correctamente. Ve a la pestaña Menú semanal para verlo actualizado.")
+                st.session_state["menu_pendiente_carga"] = menu_cargado_df.to_dict("records")
+                st.success("Menú cargado. Actualizando...")
+                st.rerun()
 
     with col_limpiar:
         if st.button("Limpiar menú actual"):
-            limpiar_menu_session_state()
-            st.success("Menú limpiado. Ve a la pestaña Menú semanal para confirmar.")
+            st.session_state["limpiar_menu_pendiente"] = True
+            st.success("Menú limpiado. Actualizando...")
+            st.rerun()
