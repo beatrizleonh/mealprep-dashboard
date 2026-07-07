@@ -68,6 +68,15 @@ st.markdown(
         color: #6b7280;
         font-size: 0.92rem;
     }
+
+    .legend-box {
+        background-color: #fafafa;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 10px 14px;
+        margin-bottom: 14px;
+        font-size: 0.95rem;
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -89,12 +98,19 @@ def cargar_excel():
 
     xls = pd.ExcelFile(EXCEL_PATH)
 
-    return {
+    data = {
         "platillos": pd.read_excel(xls, sheet_name="Hoja 1 - Platillos"),
         "ingredientes": pd.read_excel(xls, sheet_name="Ingredientes_base"),
         "preparaciones": pd.read_excel(xls, sheet_name="Hoja 3 - Preparaciones"),
         "equivalencias": pd.read_excel(xls, sheet_name="Hoja 4 - Equivalencias"),
     }
+
+    if "Hoja 7 - Hogar" in xls.sheet_names:
+        data["hogar"] = pd.read_excel(xls, sheet_name="Hoja 7 - Hogar")
+    else:
+        data["hogar"] = pd.DataFrame(columns=["Nombre", "Categoría"])
+
+    return data
 
 
 def limpiar_texto(texto):
@@ -158,12 +174,6 @@ def formato_cantidad(numero):
 
 
 def separar_cantidad_unidad(texto):
-    """
-    Convierte textos tipo:
-    '1/4 taza' -> 0.25, 'taza'
-    '2 cucharadas' -> 2, 'cucharadas'
-    '30 gramos' -> 30, 'gramos'
-    """
     texto = limpiar_texto(texto)
 
     if texto == "":
@@ -441,16 +451,10 @@ def render_ingredientes_faltantes(faltantes_df):
 
 
 def consolidar_ingredientes_faltantes(faltantes_df):
-    """
-    Une ingredientes repetidos después de elegir equivalencias.
-    Ejemplo:
-    Couscous cocido 1/3 taza + Couscous cocido 2/3 taza = Couscous cocido 1 taza.
-    """
     if faltantes_df.empty:
         return faltantes_df
 
     df = faltantes_df.copy()
-
     df["cantidad_num"] = df["cantidad"].apply(convertir_a_numero)
 
     consolidado = (
@@ -616,6 +620,21 @@ def calcular_sustitucion(eq_df, grupo, ingrediente_original, cantidad_total_orig
     return formato_cantidad(nueva_cantidad), unidad_elegida
 
 
+def formatear_opcion_platillo(platillo, mapa_nutriologa):
+    if platillo == "—":
+        return "—"
+
+    estado = normalizar(mapa_nutriologa.get(platillo, ""))
+
+    if estado == "si":
+        return f"🟩 {platillo}"
+
+    if estado == "no":
+        return f"🟨 {platillo}"
+
+    return platillo
+
+
 # ---------------------------------------------------------
 # CARGA DE DATOS
 # ---------------------------------------------------------
@@ -626,14 +645,23 @@ platillos_df = data["platillos"]
 ingredientes_df = data["ingredientes"]
 preparaciones_df = data["preparaciones"]
 equivalencias_df = data["equivalencias"]
+hogar_df = data["hogar"]
 
 platillos_df.columns = platillos_df.columns.str.strip().str.lower()
 ingredientes_df.columns = ingredientes_df.columns.str.strip().str.lower()
 preparaciones_df.columns = preparaciones_df.columns.str.strip().str.lower()
 equivalencias_df.columns = equivalencias_df.columns.str.strip().str.lower()
+hogar_df.columns = hogar_df.columns.str.strip().str.lower()
 
 platillos_df["platillo"] = platillos_df["platillo"].apply(limpiar_texto)
 platillos_df["tipo"] = platillos_df["tipo"].apply(limpiar_texto).str.lower()
+
+if "nutriologa" not in platillos_df.columns:
+    platillos_df["nutriologa"] = ""
+
+platillos_df["nutriologa"] = platillos_df["nutriologa"].apply(limpiar_texto)
+
+mapa_nutriologa = dict(zip(platillos_df["platillo"], platillos_df["nutriologa"]))
 
 ingredientes_df["platillo"] = ingredientes_df["platillo"].apply(limpiar_texto)
 ingredientes_df["ingrediente"] = ingredientes_df["ingrediente"].apply(limpiar_texto)
@@ -647,9 +675,23 @@ if "cantidad_decimal" not in ingredientes_df.columns:
 
 ingredientes_df["cantidad_decimal"] = ingredientes_df["cantidad_decimal"].apply(convertir_a_numero)
 
+if "nombre" not in hogar_df.columns:
+    hogar_df["nombre"] = ""
+
+if "categoría" not in hogar_df.columns and "categoria" in hogar_df.columns:
+    hogar_df["categoría"] = hogar_df["categoria"]
+
+if "categoría" not in hogar_df.columns:
+    hogar_df["categoría"] = ""
+
+hogar_df["nombre"] = hogar_df["nombre"].apply(limpiar_texto)
+hogar_df["categoría"] = hogar_df["categoría"].apply(limpiar_texto)
+
+hogar_df = hogar_df[hogar_df["nombre"] != ""].copy()
+hogar_df = hogar_df.sort_values(["categoría", "nombre"])
+
 equivalencias_limpias_global = preparar_equivalencias(equivalencias_df)
 
-# Carga segura desde Base: se aplica ANTES de dibujar selectboxes
 if "menu_pendiente_carga" in st.session_state:
     cargar_menu_en_session_state(pd.DataFrame(st.session_state["menu_pendiente_carga"]))
     del st.session_state["menu_pendiente_carga"]
@@ -701,13 +743,14 @@ if st.sidebar.button("Iniciar menú nuevo"):
 # TABS
 # ---------------------------------------------------------
 
-tab_menu, tab_ingredientes, tab_preparaciones, tab_equivalencias, tab_base = st.tabs(
+tab_menu, tab_ingredientes, tab_preparaciones, tab_equivalencias, tab_base, tab_hogar = st.tabs(
     [
         "📅 Menú semanal",
         "🛒 Ingredientes totales",
         "👩‍🍳 Preparaciones",
         "🔁 Equivalencias",
         "📋 Base",
+        "🏠 Hogar",
     ]
 )
 
@@ -718,6 +761,15 @@ tab_menu, tab_ingredientes, tab_preparaciones, tab_equivalencias, tab_base = st.
 
 with tab_menu:
     st.subheader("📅 Menú semanal")
+
+    st.markdown(
+        """
+        <div class="legend-box">
+        🟩 Sugerencia de nutrióloga &nbsp;&nbsp; | &nbsp;&nbsp; 🟨 Platillo propio
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     filas_comida = {
         "Desayuno": ["desayuno"],
@@ -774,7 +826,8 @@ with tab_menu:
                     options=opciones_mostradas,
                     index=index_default,
                     key=key,
-                    label_visibility="collapsed"
+                    label_visibility="collapsed",
+                    format_func=lambda x, mapa=mapa_nutriologa: formatear_opcion_platillo(x, mapa)
                 )
 
                 if platillo_elegido != "—":
@@ -926,8 +979,6 @@ with tab_ingredientes:
             st.success("Ya marcaste todos los ingredientes como listos ✅")
         else:
             faltantes_df = pd.DataFrame(ingredientes_faltantes)
-
-            # Consolidar ingredientes repetidos después de elegir equivalencias
             faltantes_df = consolidar_ingredientes_faltantes(faltantes_df)
 
             texto_faltantes = generar_texto_ingredientes(faltantes_df)
@@ -1073,3 +1124,39 @@ Cena: Cereal de soya con nuez y frutos rojos"""
             st.session_state["limpiar_menu_pendiente"] = True
             st.success("Menú limpiado. Actualizando...")
             st.rerun()
+
+
+# ---------------------------------------------------------
+# TAB 6: HOGAR
+# ---------------------------------------------------------
+
+with tab_hogar:
+    st.subheader("🏠 Hogar")
+
+    st.write(
+        "Lista general de productos de casa. Puedes filtrar por categoría para armar listas rápidas."
+    )
+
+    if hogar_df.empty:
+        st.warning("No encontré información en la hoja `Hoja 7 - Hogar`.")
+    else:
+        categorias_hogar = sorted(hogar_df["categoría"].dropna().unique().tolist())
+
+        categoria_elegida = st.selectbox(
+            "Filtrar por categoría:",
+            ["Todas"] + categorias_hogar
+        )
+
+        if categoria_elegida == "Todas":
+            hogar_filtrado = hogar_df.copy()
+        else:
+            hogar_filtrado = hogar_df[hogar_df["categoría"] == categoria_elegida].copy()
+
+        hogar_filtrado = hogar_filtrado[["nombre", "categoría"]].copy()
+        hogar_filtrado.columns = ["Nombre", "Categoría"]
+
+        st.dataframe(
+            hogar_filtrado,
+            use_container_width=True,
+            hide_index=True
+        )
